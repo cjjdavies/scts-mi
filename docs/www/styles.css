@@ -1,0 +1,97 @@
+.navbar-inverse .navbar-nav > .active > a, .navbar-inverse .navbar-nav > .active > a:hover, .navbar-inverse .navbar-nav > .active > a:focus {
+  font-size: 1.5rem;
+  font-family: Roboto;
+  color: #000000;
+  background-color: #FFFFFF;
+}
+
+.navbar-inverse .navbar-nav > li > a:hover, .navbar-inverse .navbar-nav > li > a:focus, .navbar-inverse .navbar-nav > .open > a, .navbar-inverse .navbar-nav > .open > a:hover, .navbar-inverse .navbar-nav > .open > a:focus{
+    color: #000000;
+    background-color: #FFFFFF;
+}
+
+.dropdown-menu > .active > a, .dropdown-menu > .active > a:hover, .dropdown-menu > .active > a:focus, .dropdown-item > .active > li > a, .dropdown-item > .active > a:hover, .dropdown-item > .active > a:focus {
+  font-family: Roboto;
+  color: #FFFFFF;
+  background-color: #5d085d;
+}
+
+.dropdown-menu > li > a:hover, .dropdown-menu > li > a:focus {
+  font-family: Roboto;
+  color: #000000;
+  background-color: #5d085d40;
+}
+
+h1 {
+   font-family: Roboto; sans-serif;
+   font-size: 3rem;
+   colour: #000000;
+   font-weight: 650;}
+
+h3 {
+  font-family: Roboto; sans-serif;
+  font-size: 2.5rem;
+  colour: #000000;
+  font-weight: 600;
+}
+
+#data-summary > p, p {
+   font-size: 1.75rem;
+   colour: #000000;
+}
+
+.chart-shim > blockquote > p {
+  font-size: 1.4rem;
+  colour: #000000;
+}
+
+.chart-wrapper > .chart-notes {
+  font-size: 2rem;
+  colour: #000000;
+}
+
+.chart-sizing {
+  height: auto;
+  width: auto;
+  padding: 1rem;
+}
+
+.flowchart-sizing {
+  height: auto;
+  width: auto;
+  padding: 2rem;
+  margin: 2rem;
+}
+
+.navbar-inverse {
+  background-color: #5D085D;
+  border-color: ##5D085D;
+}
+
+.navbar-inverse .navbar-brand {
+  font-weight: 600;
+  font-family: Roboto;
+  color: #ffffff;
+}
+
+.nav-tabs-custom > .nav-tabs > li.active {
+    border-top-color: rgba(129, 39, 227, 0.7);
+}
+
+.nav-tabs-custom .nav-tabs li.active a {
+  font-size: 2rem;
+  font-weight: 400;
+  font-family: Roboto;
+  color: #5D085D;
+}
+
+.nav-tabs-custom .nav-tabs li:not(.active) a {
+  font-family: Roboto;
+  font-size: 2rem;
+  font-weight: 400;
+  color: #000000;
+}
+
+#sidebar {
+  background-color: #FFFFFF;
+}
