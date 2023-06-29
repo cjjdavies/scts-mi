@@ -1,0 +1,2638 @@
+---
+title: "Scottish Courts and Tribunals Service: Management Information"
+output:
+  flexdashboard::flex_dashboard:
+    output_dir: docs
+    css: www/styles.css
+    orientation: row
+    social: ["menu"]
+    theme:
+      cosmo
+---
+
+```{r setup, echo=FALSE, include=FALSE}
+library(tidyverse)
+library(reactablefmtr)
+library(htmltools)
+library(htmlwidgets)
+library(plotly)
+
+```
+
+```{r data-wrangling, echo=FALSE, include=FALSE}
+
+# Load dataset
+midata <- read.csv2("mi_data.csv", sep = ",")
+
+# Create a unique ID by concatenating the first two columns, adding them to the dataframe without dropping the original columns by using remove = FALSE
+midata <- midata %>%
+  unite("ID", Court.type:Court.stage, remove = FALSE)
+
+# Inspect data to understand the structure, column names, dimensions (rows then columns), and view the data in spreadsheet format
+# head(midata)
+# names(midata)
+# dim(midata)
+# View(midata)
+
+# The date columns need to be reformatted as dates like the spreadsheet (abbreviated month name and last two digits of the year)
+# gather will bring the data together in long format, using the columns 4 to 40 (the dates) into one column
+# The mutate function will add a column with the new date formatting
+midata <- midata %>% 
+  gather(key, value, 4:41) %>% 
+  mutate(newdate = as.Date(key, format = "X%d.%m.%Y"))
+
+# The easiest way I could find to do this is to format the date this way:
+midata$newdate <- format(midata$newdate, "%b.%Y")
+
+# Then return to the original structure using the column names and names_from/ values_from arguments to put everything back as it was with the new dates
+midata <- midata %>% pivot_wider(id_cols = c(ID,
+                                             Court.type,
+                                             Court.stage,
+                                             X2023.24,
+                                             X2019.20..monthly.average),
+                                 names_from = newdate, values_from = value)
+
+# Columns can be renamed within the table formatting - see next section - and can make the table work in reactable much easier
+# Two more columns need to be renamed - X2023.24 and X2019.20..monthly.average
+colnames(midata)[colnames(midata) == "X2023.24"] <- "2023.24"
+colnames(midata)[colnames(midata) == "X2019.20..monthly.average"] <- "2019.20.monthly.average"
+
+# Remove % symbol from values within the dataframe and replace N/A with NA
+midata[] <- lapply(midata, gsub, pattern = "%", fixed = TRUE, replacement = "")
+midata[] <- lapply(midata, gsub, pattern = "N/A", fixed = TRUE, replacement = NA)
+
+# Remove the 3 at the end of some sentences
+midata$Court.stage <- gsub("3", replacement = "", midata$Court.stage)
+
+# Convert court type and court stage to factors
+midata$ID <- as.factor(midata$ID)
+midata$Court.type <- as.factor(midata$Court.type)
+midata$Court.stage <- as.factor(midata$Court.stage)
+
+# Convert all numeric columns to numeric
+midata <- midata %>% mutate_at(c(4:43), as.numeric)
+
+# Move the columns X2023.24 and X2019.20..monthly.average to the end of the dataframe
+midata <- midata %>% 
+  relocate(`2023.24`, `2019.20.monthly.average`, .after = May.23)
+
+# Attempting to colour-code the values for each month compared to whether they are better (lower) or worse (higher) than the monthly average
+# I think I need to specify a minimum and maximum allowance of e.g. 5% for either side of each monthly average
+midata <- midata %>% 
+  mutate(min_monthlyaverage = `2019.20.monthly.average`/1.05) %>% 
+  mutate(max_monthlyaverage = `2019.20.monthly.average`*1.05)
+
+```
+
+```{r colour-coding, echo=FALSE, include=FALSE}
+
+### Colour-coding ###
+
+# Some rows are coded red to indicate the value is bad compared to the 2019-20 monthly average, others are coded green to indicate the value is good.
+
+# Using case_when in this situation is more efficient than 'ifelse'. The '.' is to work across the specified columns (all the date columns), comparing the values within each row to the min and max monthly averages, and assigning a colour if the logical value is true
+
+# Finally the newly created columns with the colour coding will be named using the 'col_' prefix for 'colour' and the {col} names will be appended, creating e.g. 'Apr.20_cols'
+midata1 <- midata %>% filter(Court.stage %in% c("National total of cases registered (not including petitions)",
+                                                "National total of cases that called at a first hearing",
+                                                "National total of cases that called at a continued first hearing",
+                                                "National total of Section 76 (Solemn business only)",
+                                                "National total of intermediate diets called (Summary business only)",
+                                                "National total of trials called",
+                                                "National total of trials called where evidence was led",
+                                                "National total of cases concluded",
+                                                "Indictments registered",
+                                                "Indictments called at Preliminary Hearing",
+                                                "Indictments called at Continued Preliminary Hearing",
+                                                "Section 76 Indictments",
+                                                "Trials called",
+                                                "Trials called where evidence was led",
+                                                "Indictments concluded",
+                                                "Petitions registered",
+                                                "Indictments called at First Diet",
+                                                "Indictments called at Continued First Diet",
+                                                "Complaints registered",
+                                                "Complaints called for first time",
+                                                "Complaints called for 'Continued Without Plea' hearing",
+                                                "Complaints called in Intermediate Diet court",
+                                                "Complaints concluded",
+                                                "Complaints registered during period",
+                                                "Complaints called in Intermediate Diet court")) %>% 
+  mutate(across(.cols = c(-ID, -Court.type, -Court.stage, -`2023.24`, -`2019.20.monthly.average`, -min_monthlyaverage, -max_monthlyaverage),
+                ~ case_when((. > min_monthlyaverage) & (. < max_monthlyaverage) ~ '#A9A9A9',
+                            . >= min_monthlyaverage ~ '#758A0C',
+                            is.na(.) ~ '#FFFFFF',
+                            TRUE ~ '#8B0000'),
+                .names = "{col}_cols"))
+
+# View(midata1)
+
+# Rows not selected in the previous step need reverse colour-coding because they are worse if greater than the monthly average, and better if they are lower than the monthly average
+midata2 <- midata %>% filter(!Court.stage %in% c("National total of cases registered (not including petitions)",
+                                                "National total of cases that called at a first hearing",
+                                                "National total of cases that called at a continued first hearing",
+                                                "National total of Section 76 (Solemn business only)",
+                                                "National total of intermediate diets called (Summary business only)",
+                                                "National total of trials called",
+                                                "National total of trials called where evidence was led",
+                                                "National total of cases concluded",
+                                                "Indictments registered",
+                                                "Indictments called at Preliminary Hearing",
+                                                "Indictments called at Continued Preliminary Hearing",
+                                                "Section 76 Indictments",
+                                                "Trials called",
+                                                "Trials called where evidence was led",
+                                                "Indictments concluded",
+                                                "Petitions registered",
+                                                "Indictments called at First Diet",
+                                                "Indictments called at Continued First Diet",
+                                                "Complaints registered",
+                                                "Complaints called for first time",
+                                                "Complaints called for 'Continued Without Plea' hearing",
+                                                "Complaints called in Intermediate Diet court",
+                                                "Complaints concluded",
+                                                "Complaints registered during period",
+                                                "Complaints called in Intermediate Diet court")) %>% 
+  mutate(across(.cols = c(-ID, -Court.type, -Court.stage, -`2023.24`, -`2019.20.monthly.average`, -min_monthlyaverage, -max_monthlyaverage),
+                ~ case_when((. > min_monthlyaverage) & (. < max_monthlyaverage) ~ '#A9A9A9',
+                            . <= min_monthlyaverage ~ '#758A0C',
+                            is.na(.) ~ '#FFFFFF',
+                            TRUE ~ '#8B0000'),
+                .names = "{col}_cols"))
+
+```
+
+```{r reactable-making, echo=FALSE, include=FALSE, cache=TRUE}
+
+# Join the two datasets, combining all rows and columns
+midata3 <- full_join(midata1, midata2)
+
+# Order the data in the joined dataframe by the row IDs, using the original dataframe as a reference
+midata3 <- midata3[ order(match(midata3$ID, midata$ID)), ]
+
+# Test the data to make sure it works
+midata3 %>% reactable(
+          columns = list(
+           Apr.20 = colDef(
+             align = "center",
+             cell = color_tiles(., color_ref = "Apr.20_cols"),
+             name = "April 2020")))
+
+# Background style to visually distinguish sticky columns. These can be applied to specific reference columns in the table.
+sticky_style <- list(backgroundColor = "#f7f7f7")
+sticky_style2 <- list(backgroundColor = "#EFF7FA")
+
+### This is the main reactable for the front page ###
+
+# Create an interactive data table
+mi_table <- reactable(
+  midata3[2:43],
+  height = 500,
+  theme = fivethirtyeight(),
+  highlight = TRUE,
+  wrap = FALSE,
+  sortable = FALSE,
+  resizable = TRUE,
+  groupBy = "Court.type",
+  defaultColDef = colDef(
+    align = "left"
+  ),
+  columns = list(
+    Apr.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Apr.20_cols"),
+              name = "April 2020"),
+    May.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "May.20_cols"),
+              name = "May 2020"),
+    Jun.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jun.20_cols"),
+              name = "June 2020"),
+    Jul.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jul.20_cols"),
+              name = "July 2020"),
+    Aug.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Aug.20_cols"),
+              name = "Aug 2020"),
+    Sep.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Sep.20_cols"),
+              name = "Sept 2020"),
+    Oct.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Oct.20_cols"),
+              name = "Oct 2020"),
+    Nov.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Nov.20_cols"),
+              name = "Nov 2020"),
+    Dec.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Dec.20_cols"),
+              name = "Dec 2020"),
+    Jan.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jan.21_cols"),
+              name = "Jan 2021"),
+    Feb.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Feb.21_cols"),
+              name = "Feb 2021"),
+    Mar.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Mar.21_cols"),
+              name = "March 2021"),
+    Apr.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Apr.21_cols"),
+              name = "April 2021"),
+    May.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "May.21_cols"),
+              name = "May 2021"),
+    Jun.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jun.21_cols"),
+              name = "June 2021"),
+    Jul.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jul.21_cols"),
+              name = "July 2021"),
+    Aug.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Aug.21_cols"),
+              name = "Aug 2021"),
+    Sep.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Sep.21_cols"),
+              name = "Sept 2021"),
+    Oct.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Oct.21_cols"),
+              name = "Oct 2021"),
+    Nov.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Nov.21_cols"),
+              name = "Nov 2021"),
+    Dec.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Dec.21_cols"),
+              name = "Dec 2021"),
+    Jan.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jan.22_cols"),
+              name = "Jan 2022"),
+    Feb.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Feb.22_cols"),
+              name = "Feb 2022"),
+    Mar.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Mar.22_cols"),
+              name = "March 2022"),
+    Apr.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Apr.22_cols"),
+              name = "April 2022"),
+    May.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "May.22_cols"),
+              name = "May 2022"),
+    Jun.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jun.22_cols"),
+              name = "June 2022"),
+    Jul.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jul.22_cols"),
+              name = "July 2022"),
+    Aug.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Aug.22_cols"),
+              name = "Aug 2022"),
+    Sep.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Sep.22_cols"),
+              name = "Sept 2022"),
+    Oct.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Oct.22_cols"),
+              name = "Oct 2022"),
+    Nov.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Nov.22_cols"),
+              name = "Nov 2022"),
+    Dec.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Dec.22_cols"),
+              name = "Dec 2022"),
+    Jan.23 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jan.23_cols"),
+              name = "Jan 2023"),
+    Feb.23 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Feb.23_cols"),
+              name = "Feb 2023"),
+    Mar.23 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Mar.23_cols"),
+              name = "March 2023"),
+    Apr.23 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Apr.23_cols"),
+              name = "April 2023"),
+    May.23 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "May.23_cols"),
+              name = "May 2023"),
+    Court.stage = colDef(
+      style = sticky_style,
+      sticky = "left",
+      headerStyle = sticky_style,
+      minWidth = 350,
+      name = "Court stage"), # rename column
+      cell = color_tiles(midata3),
+    `2023.24` = colDef(
+      name = "2023/24"), # rename column
+    `2019.20.monthly.average` = colDef(
+      style = sticky_style2,
+      headerStyle = sticky_style2,
+      name = "2019/20 monthly average", # rename column
+      sticky = "right"),
+    Court.type = colDef(
+      style = sticky_style,
+      sticky = "left",
+      headerStyle = sticky_style,
+      minWidth = 250,
+      name = "Court type", # rename column
+      filterable = TRUE,
+      filterInput = function(values, name) {
+        tags$select(
+          # Set to undefined to clear the filter
+          onchange = sprintf("Reactable.setFilter('court-select', '%s', event.target.value || undefined)", name),
+          # "All" has an empty value to clear the filter, and is the default option
+          tags$option(value = "", "All"),
+          lapply(unique(values), tags$option),
+          "aria-label" = sprintf("Filter %s", name),
+          style = "width: 100%; height: 28px;"
+        )
+      }
+    )
+    ),
+  defaultPageSize = 13,
+  elementId = "court-select") %>% 
+  google_font("Roboto")
+
+# Check the table to make sure it works
+# mi_table
+
+# Create a static data table
+mi_table_static <- reactable(
+  midata3[2:43],
+  height = 1000,
+  pagination = FALSE,
+  theme = fivethirtyeight(),
+  highlight = TRUE,
+  wrap = FALSE,
+  sortable = FALSE,
+  resizable = TRUE,
+  # groupBy = "Court.type",
+  defaultColDef = colDef(
+    align = "left",
+    show = TRUE
+  ),
+  columns = list(
+    Apr.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Apr.20_cols"),
+              name = "April 2020"),
+    May.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "May.20_cols"),
+              name = "May 2020"),
+    Jun.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jun.20_cols"),
+              name = "June 2020"),
+    Jul.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jul.20_cols"),
+              name = "July 2020"),
+    Aug.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Aug.20_cols"),
+              name = "Aug 2020"),
+    Sep.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Sep.20_cols"),
+              name = "Sept 2020"),
+    Oct.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Oct.20_cols"),
+              name = "Oct 2020"),
+    Nov.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Nov.20_cols"),
+              name = "Nov 2020"),
+    Dec.20 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Dec.20_cols"),
+              name = "Dec 2020"),
+    Jan.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jan.21_cols"),
+              name = "Jan 2021"),
+    Feb.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Feb.21_cols"),
+              name = "Feb 2021"),
+    Mar.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Mar.21_cols"),
+              name = "March 2021"),
+    Apr.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Apr.21_cols"),
+              name = "April 2021"),
+    May.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "May.21_cols"),
+              name = "May 2021"),
+    Jun.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jun.21_cols"),
+              name = "June 2021"),
+    Jul.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jul.21_cols"),
+              name = "July 2021"),
+    Aug.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Aug.21_cols"),
+              name = "Aug 2021"),
+    Sep.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Sep.21_cols"),
+              name = "Sept 2021"),
+    Oct.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Oct.21_cols"),
+              name = "Oct 2021"),
+    Nov.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Nov.21_cols"),
+              name = "Nov 2021"),
+    Dec.21 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Dec.21_cols"),
+              name = "Dec 2021"),
+    Jan.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jan.22_cols"),
+              name = "Jan 2022"),
+    Feb.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Feb.22_cols"),
+              name = "Feb 2022"),
+    Mar.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Mar.22_cols"),
+              name = "March 2022"),
+    Apr.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Apr.22_cols"),
+              name = "April 2022"),
+    May.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "May.22_cols"),
+              name = "May 2022"),
+    Jun.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jun.22_cols"),
+              name = "June 2022"),
+    Jul.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jul.22_cols"),
+              name = "July 2022"),
+    Aug.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Aug.22_cols"),
+              name = "Aug 2022"),
+    Sep.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Sep.22_cols"),
+              name = "Sept 2022"),
+    Oct.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Oct.22_cols"),
+              name = "Oct 2022"),
+    Nov.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Nov.22_cols"),
+              name = "Nov 2022"),
+    Dec.22 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Dec.22_cols"),
+              name = "Dec 2022"),
+    Jan.23 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Jan.23_cols"),
+              name = "Jan 2023"),
+    Feb.23 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Feb.23_cols"),
+              name = "Feb 2023"),
+    Mar.23 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Mar.23_cols"),
+              name = "March 2023"),
+    Apr.23 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "Apr.23_cols"),
+              name = "April 2023"),
+    May.23 = colDef(
+      align = "center",
+              cell = color_tiles(midata3, color_ref = "May.23_cols"),
+              name = "May 2023"),
+    Court.stage = colDef(
+      style = sticky_style,
+      sticky = "left",
+      headerStyle = sticky_style,
+      minWidth = 350,
+      name = "Court stage"), # rename column
+      cell = color_tiles(midata3),
+    `2023.24` = colDef(
+      name = "2023/24"), # rename column
+    `2019.20.monthly.average` = colDef(
+      style = sticky_style2,
+      headerStyle = sticky_style2,
+      name = "2019/20 monthly average", # rename column
+      sticky = "right"),
+    Court.type = colDef(
+      style = sticky_style,
+      sticky = "left",
+      headerStyle = sticky_style,
+      minWidth = 250,
+      name = "Court type",
+    ),
+  defaultPageSize = 13)) %>% 
+  google_font("Roboto")
+
+# mi_table_static
+
+```
+
+```{r interactive-plot, echo=FALSE, include=FALSE}
+
+### Building an interactive plot ###
+
+# Perhaps starting by converting the data into long format, putting months into one column
+# Check the number of rows and columns
+# names(midata)
+# dim(midata)
+
+# Further tinkering with the data will be useful to cut down the amount of code repetition for creating the plots
+# Reorder the levels of Court Type so that Justice of the Peace Court comes last and National comes first, just like the original chart
+
+# Check the factor levels for Court Type
+midata$Court.type %>% levels()
+
+midata$Court.type <- fct_relevel(midata$Court.type, "Justice of the Peace Court", after = Inf)
+
+# Move National to first position
+midata <- midata %>% 
+  mutate(Court.type = Court.type %>%
+           fct_relevel("National")
+         )
+
+# Create a variable called 'date_levels' to use to set the order of the x-axis variables
+date_levels <- c("Apr.20", "May.20", "Jun.20", "Jul.20", "Aug.20", "Sep.20", "Oct.20", "Nov.20", "Dec.20", "Jan.21", "Feb.21", "Mar.21", "Apr.21", "May.21", "Jun.21", "Jul.21", "Aug.21", "Sep.21", "Oct.21", "Nov.21", "Dec.21", "Jan.22", "Feb.22", "Mar.22", "Apr.22", "May.22", "Jun.22", "Jul.22", "Aug.22", "Sep.22", "Oct.22", "Nov.22", "Dec.22", "Jan.23", "Feb.23", "Mar.23", "Apr.23", "May.23", "2019.20.monthly.average")
+
+# For the line graph, which doesn't have the 2019/20 monthly average column
+date_levelsB <- c("Apr.20", "May.20", "Jun.20", "Jul.20", "Aug.20", "Sep.20", "Oct.20", "Nov.20", "Dec.20", "Jan.21", "Feb.21", "Mar.21", "Apr.21", "May.21", "Jun.21", "Jul.21", "Aug.21", "Sep.21", "Oct.21", "Nov.21", "Dec.21", "Jan.22", "Feb.22", "Mar.22", "Apr.22", "May.22", "Jun.22", "Jul.22", "Aug.22", "Sep.22", "Oct.22", "Nov.22", "Dec.22", "Jan.23", "Feb.23", "Mar.23", "Apr.23", "May.23")
+
+# Create a variable for the x-axis labels as they will be shown on the graphs, wrapping longer labels to make it look tidier
+date_labels <- str_wrap(c("April 20", "May 20", "June 20", "July 20", "Aug 20", "Sept 20", "Oct 20", "Nov 20", "Dec 20", "Jan 21", "Feb 21", "March 21", "April 21", "May 21", "June 21", "July 21", "Aug 21", "Sept 21", "Oct 21", "Nov 21", "Dec 21", "Jan 22", "Feb 22", "March 22", "April 22", "May 22", "June 22", "July 22", "Aug 22", "Sept 22", "Oct 22", "Nov 22", "Dec 22", "Jan 23", "Feb 23", "March 23", "April 23", "May 2023", "2019/20 monthly average"), width = 10)
+
+# Create a second set of date labels to use in the linegraphs
+date_labelsB <- c("April 20", "May 20", "June 20", "July 20", "Aug 20", "Sept 20", "Oct 20", "Nov 20", "Dec 20", "Jan 21", "Feb 21", "March 21", "April 21", "May 21", "June 21", "July 21", "Aug 21", "Sept 21", "Oct 21", "Nov 21", "Dec 21", "Jan 22", "Feb 22", "March 22", "April 22", "May 22", "June 22", "July 22", "Aug 22", "Sept 22", "Oct 22", "Nov 22", "Dec 22", "Jan 23", "Feb 23", "March 23", "April 23", "May 2023")
+
+# And a separate suite of date labels, minus the last monthly average column - won't need to wrap text
+date_labelsB <- factor(date_labelsB, levels = c("April 20", "May 20", "June 20", "July 20", "Aug 20", "Sept 20", "Oct 20", "Nov 20", "Dec 20", "Jan 21", "Feb 21", "March 21", "April 21", "May 21", "June 21", "July 21", "Aug 21", "Sept 21", "Oct 21", "Nov 21", "Dec 21", "Jan 22", "Feb 22", "March 22", "April 22", "May 22", "June 22", "July 22", "Aug 22", "Sept 22", "Oct 22", "Nov 22", "Dec 22", "Jan 23", "Feb 23", "March 23", "April 23", "May 2023"))
+
+# Creating court labels
+court_labels <- c("National", "High Court", "Sheriff Court - Solemn", "Sheriff Court - Summary", "Justice of the Peace Court - Summary")
+
+# Create a variable for the legend labels showing the different courts, including national level data
+court_labels <- factor(court_labels, levels = c("National", "High Court", "Sheriff Court - Solemn", "Sheriff Court - Summary", "Justice of the Peace Court - Summary"))
+
+# And a set of court labels without the 'National' figures
+court_labelsB <- c("High Court", "Sheriff Court - Solemn", "Sheriff Court - Summary", "Justice of the Peace Court - Summary")
+
+court_labelsB <- factor(court_labelsB, levels = c("High Court", "Sheriff Court - Solemn", "Sheriff Court - Summary", "Justice of the Peace Court - Summary"))
+
+### Barplots ###
+
+# Create a 'cases registered' barplot
+cases_registered <- midata %>%
+  select(-c("2023.24", "min_monthlyaverage", "max_monthlyaverage")) %>% # drop columns
+  filter(Court.stage %in% c("National total of cases registered (not including petitions)", # select rows
+                            "Indictments registered",
+                            #"Petitions registered",
+                            "Complaints registered",
+                            "Complaints registered during period")) %>%
+  pivot_longer(4:42, names_to = "Date", values_to = "Count") %>% # transpose data to month/year and count
+  ggplot(aes(x = factor(Date, # date on the x-axis
+                        level = date_levels),
+             y = Count)) +
+  geom_col(aes(fill = Court.type, # colour-code by court type
+               text = paste("Court:", Court.type, # this is for the tooltip
+                            "<br>Date:", date_labels,
+                            "<br>Number:", Count)),
+           position = "dodge") +
+  scale_x_discrete(labels = date_labels) +
+  coord_cartesian(ylim = c(0, 10000)) + # set the scale of the y-axis
+  scale_y_continuous(expand = c(0, 0), breaks = seq(0, 10000, 1000)) + # set the scale of the x-axis
+  labs( # labels if I decide to use them at a later date - I won't for now
+    x = "Date",
+    y = "Count",
+    fill = "Court Type",
+  ) +
+  scale_fill_brewer(type = "seq", # choose the colour palette for colourblindness
+                    palette = "Dark2",
+                    labels = c("National", "High Court", "Sheriff Court - Solemn", "Sheriff Court - Summary", "Justice of the Peace Court - Summary")) +
+  theme_bw() + # plain theme with custom settings below
+  theme(plot.title = element_text(size = 16, hjust = 0.5, vjust = 2),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 11),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 11, colour = "#000000", vjust = 0.45, angle = 25),
+        panel.grid.minor = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 11, colour = "#000000"))
+
+cases_registered
+
+# Rinse and repeat: create a 'trials called' barplot
+trials_called <- midata %>%
+  select(-c("2023.24", "min_monthlyaverage", "max_monthlyaverage")) %>% 
+  filter(Court.stage %in% c("National total of trials called",
+                            "Trials called")) %>%
+  pivot_longer(4:42, names_to = "Date", values_to = "Count") %>% 
+  ggplot(aes(x = factor(Date,
+                      level = date_levels),
+             y = Count)) +
+  geom_col(aes(fill = Court.type,
+               text = paste("Court:", Court.type,
+                            "<br>Date:", date_labels,
+                            "<br>Number:", Count)),
+           position = "dodge") +
+  scale_x_discrete(labels = date_labels) +
+  coord_cartesian(ylim = c(0, 10000)) +
+  scale_y_continuous(expand = c(0, 0), breaks = seq(0, 10000, 1000)) +
+  labs(
+    x = "Date",
+    y = "Count",
+    fill = "Court Type",
+  ) +
+  scale_fill_brewer(type = "seq",
+                    palette = "Dark2",
+                    labels = court_labels) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 16, hjust = 0.5, vjust = 2),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 11),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 11, colour = "#000000", vjust = 0.45, angle = 25),
+        panel.grid.minor = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 11, colour = "#000000"))
+
+# And again: create a 'trials called where evidence was led' barplot
+evidence_led <- midata %>%
+  select(-c("2023.24", "min_monthlyaverage", "max_monthlyaverage")) %>% 
+  filter(Court.stage %in% c("National total of trials called where evidence was led",
+                            "Trials called where evidence was led")) %>%
+  pivot_longer(4:42, names_to = "Date", values_to = "Count") %>% 
+  ggplot(aes(x = factor(Date,
+                      level = date_levels),
+             y = Count)) +
+  geom_col(aes(fill = Court.type,
+               text = paste("Court:", Court.type,
+                            "<br>Date:", date_labels,
+                            "<br>Number:", Count)),
+           position = "dodge") +
+  scale_x_discrete(labels = date_labels) +
+  coord_cartesian(ylim = c(0, 1000)) +
+  scale_y_continuous(expand = c(0, 0), breaks = seq(0, 1000, 100)) +
+  labs(
+    x = "Date",
+    y = "Count",
+    fill = "Court Type") +
+  scale_fill_brewer(type = "seq",
+                    palette = "Dark2",
+                    labels = court_labels) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 16, hjust = 0.5, vjust = 2),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 11),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 11, colour = "#000000", vjust = 0.45, angle = 25),
+        panel.grid.minor = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 11, colour = "#000000"))
+
+# Once more, with feeling: create a 'cases concluded' barplot
+cases_concluded <- midata %>%
+  select(-c("2023.24", "min_monthlyaverage", "max_monthlyaverage")) %>% 
+  filter(Court.stage %in% c("National total of cases concluded",
+                            "Indictments concluded",
+                            "Complaints concluded")) %>%
+  pivot_longer(4:42, names_to = "Date", values_to = "Count") %>% 
+  ggplot(aes(x = factor(Date,
+                      level = date_levels),
+             y = Count)) +
+  geom_col(aes(fill = Court.type,
+               text = paste("Court:", Court.type,
+                            "<br>Date:", date_labels,
+                            "<br>Number:", Count)),
+           position = "dodge") +
+  scale_x_discrete(labels = date_labels) +
+  coord_cartesian(ylim = c(0, 10000)) +
+  scale_y_continuous(expand = c(0, 0), breaks = seq(0, 10000, 1000)) +
+  labs(
+    x = "Date",
+    y = "Count",
+    fill = "Court Type"
+  ) +
+  scale_fill_brewer(type = "seq",
+                    palette = "Dark2",
+                    labels = court_labels) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 16, hjust = 0.5, vjust = 2),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 11),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 11, colour = "#000000", vjust = 0.45, angle = 25),
+        panel.grid.minor = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 11, colour = "#000000"))
+
+### Linegraphs ###
+
+# Slightly different process for these data, with a bit more wrangling required
+
+# I need to create labels for the dashed lines so that they are labelled in the correct order, below the court types and match the colour aesthetics
+average_time_labels <- factor(levels = c("High Court, as at end of 2019/20",
+                                            "Sheriff Court - Solemn, as at end of 2019/20",
+                                            "Sheriff Court - Summary, as at end of 2019/20",
+                                            "Justice of the Peace Court - Summary, as at end of 2019/20"))
+
+# Then reordering to put them in the right places, with 'Justice of the Peace' last
+average_time_override_labels <- fct_relevel(average_time_labels, "Justice of the Peace Court - Summary, as at end of 2019/20", after = Inf)
+
+# Check the levels
+levels(average_time_override_labels)
+
+# NB For some reason, this didn't work on this linegraph, so I had to add the labels in the correct order under scale_linetype_manual; it works on the second linegraph
+
+# # I am going to make my own theme for these - just to see how it works
+# theme_scts <- function(base_size = 14) {
+#   theme_bw(base_size = base_size) %+replace%
+#     theme(plot.title = element_text(size = 16, hjust = 0.5, vjust = 2),
+#           legend.title = element_text(size = 14),
+#           legend.text = element_text(size = 11),
+#           axis.title.x = element_text(size = 14, vjust = -1),
+#           axis.text.x = element_text(size = 11, vjust = 0.45),
+#           panel.grid.minor = element_blank(),
+#           axis.title.y = element_text(size = 14),
+#           axis.text.y = element_text(size = 11))
+# }
+
+# Line graph of average time between pleading diet and evidence-led trial
+average_time <- midata %>%
+  select(-c("2023.24", "2019.20.monthly.average", "min_monthlyaverage", "max_monthlyaverage")) %>% 
+  filter(Court.stage == "Average time between pleading diet and evidence led trial, where evidence led trial occurred in the period shown (weeks)") %>%
+  pivot_longer(4:41, names_to = "Date", values_to = "Count") %>% 
+  ggplot(aes(x = factor(Date,
+                        level = date_levelsB),
+             y = Count)) +
+  geom_line(aes(group = Court.type,
+                color = Court.type,
+                text = paste("Court:", Court.type,
+                            "<br>Date:", date_labelsB,
+                            "<br>Number:", Count)),
+            size = 1) +
+  geom_hline(aes(yintercept = 22, # this adds a straight, horizontal line to show the averages for 2019/20
+             linetype = "High Court, as at end of 2019/20"),
+             color = "#D95F02",
+             size = 1) +
+  geom_hline(aes(yintercept = 11,
+             linetype = "Sheriff Court - Solemn, as at end of 2019/20"),
+             color = "#7570B3",
+             size = 1) +
+  geom_hline(aes(yintercept = 23,
+             linetype = "Sheriff Court - Summary, as at end of 2019/20"),
+             color = "#E7298A",
+             size = 1) +
+  geom_hline(aes(yintercept = 22,
+             linetype = "Justice of the Peace Court, as at end of 2019/20"),
+             color = "#66A61E",
+             size = 1) +
+  scale_linetype_manual(name ="", # this bit makes sure the colours applied to each court are mapped properly
+                        labels = str_wrap(c("High Court, as at end of 2019/20",
+                                            "Sheriff Court - Solemn, as at end of 2019/20",
+                                            "Sheriff Court - Summary, as at end of 2019/20",
+                                            "Justice of the Peace Court - Summary, as at end of 2019/20"), width = 35),
+                        values = c("dotted", "dashed", "dashed", "dashed")) + # type of line
+  scale_x_discrete(labels = date_labelsB) +
+  coord_cartesian(ylim = c(0, 70)) +
+  scale_y_continuous(expand = c(0, 0), breaks = seq(0, 70, 10)) +
+  labs(
+    x = "Date",
+    y = "Number of weeks",
+    color = "Court Type") +
+  scale_colour_manual(values = c("#D95F02", "#7570B3", "#E7298A", "#66A61E"),
+                    labels = court_labelsB) + # values for court type
+  theme_bw() +
+  theme(plot.title = element_text(size = 16, hjust = 0.5, vjust = 2),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 11),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 11, colour = "#000000", vjust = 0.45, angle = 25),
+        panel.grid.minor = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 11, colour = "#000000")) +
+  guides(linetype = guide_legend(override.aes=list(color = c("#D95F02", # a back-up in case the geom_hline doesn't work
+                                                             "#7570B3",
+                                                             "#E7298A",
+                                                             "#66A61E"))))
+
+average_time
+
+# Create an interactive plot, using the tooltips specified in the aesthetics
+average_time <- ggplotly(average_time,
+                         tooltip = c("text"))
+
+# Remove the weird punctuation and random 1 that appears in the legend labels
+for (i in 1:length(average_time$x$data)){
+    if (!is.null(average_time$x$data[[i]]$name)){
+        average_time$x$data[[i]]$name =  gsub("\\(","",str_split(average_time$x$data[[i]]$name,",")[[1]][1])
+    }
+}
+
+# Check the plot
+average_time
+
+# One more linegraph, with similar attributes
+# For this linegraph I need to specify legend labels for the average values, which starts by creating labels as factors
+cases_sched_labels <- factor(levels = str_wrap(c("National, as at end of 2019/20",
+                                            "High Court, as at end of 2019/20",
+                                            "Sheriff Court - Solemn, as at end of 2019/20",
+                                            "Sheriff Court - Summary, as at end of 2019/20",
+                                            "Justice of the Peace Court - Summary, as at end of 2019/20"), width = 35))
+
+# Then reordering to put them in the right places, with 'National' first and 'Justice of the Peace' last
+cases_sched_labels %>% levels()
+
+cases_sched_override_labels <- fct_relevel(cases_sched_labels, "National, as at end of 2019/20")
+
+cases_sched_override_labels <- fct_relevel(cases_sched_labels, "Justice of the Peace Court - Summary, as at end of 2019/20", after = Inf)
+
+# Check the levels
+levels(cases_sched_override_labels)
+
+# Line graph of scheduled trials
+scheduled_trials <- midata %>%
+  select(-c("2023.24", "2019.20.monthly.average", "min_monthlyaverage", "max_monthlyaverage")) %>% 
+  filter(Court.stage %in% c("National total of trials scheduled at end of period",
+                            "Trials scheduled at end of period")) %>%
+  pivot_longer(4:41, names_to = "Date", values_to = "Count") %>% 
+  ggplot(aes(x = factor(Date,
+                        level = date_levelsB),
+             y = Count)) +
+  geom_line(aes(group = Court.type,
+                color = Court.type,
+                text = paste("Court:", Court.type,
+                            "<br>Date:", date_labelsB,
+                            "<br>Number:", Count)),
+            size = 1) +
+  geom_hline(aes(yintercept = 18355,
+                 linetype = "National, as at end of 2019/20"),
+             color = "#1B9E77",
+             size = 1) +
+  geom_hline(aes(yintercept = 390,
+                 linetype = "High Court, as at end of 2019/20"),
+             color = "#D95F02",
+             size = 1) +
+  geom_hline(aes(yintercept = 497,
+             linetype = "Sheriff Court - Solemn, as at end of 2019/20"),
+             color = "#7570B3",
+             size = 1) +
+  geom_hline(aes(yintercept = 13971,
+             linetype = "Sheriff Court - Summary, as at end of 2019/20"),
+             color = "#E7298A",
+             size = 1) +
+  geom_hline(aes(yintercept = 3497,
+             linetype = "Justice of the Peace Court - Summary, as at end of 2019/20"),
+             color = "#66A61E",
+             size = 1) +
+  scale_linetype_manual(name ="",
+                        labels = c("National, as at end of 2019/20",
+                                   "High Court, as at end of 2019/20",
+                                   "Sheriff Court - Solemn, as at end of 2019/20",
+                                   "Sheriff Court - Summary, as at end of 2019/20",
+                                   "Justice of the Peace Court - Summary, as at end of 2019/20"),
+                        values = c("dotted", "dashed", "dashed", "dashed", "dashed")) +
+  scale_x_discrete(labels = date_labelsB) +
+  coord_cartesian(ylim = c(0, 50000)) +
+  scale_y_continuous(expand = c(0, 0), breaks = seq(0, 50000, 5000)) +
+  labs(
+    x = "Date",
+    y = "Count",
+    color = "Court Type") +
+  scale_colour_manual(labels = court_labels,
+                      values = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E")) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 16, hjust = 0.5, vjust = 2),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 11),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 11, colour = "#000000", vjust = 0.45, angle = 25),
+        panel.grid.minor = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 11, colour = "#000000")) +
+  guides(linetype = guide_legend(override.aes = list(color = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E"))))
+
+# Create an interactive plot with the tooltip as specified in the aesthetics of the ggplot call
+scheduled_trials <- ggplotly(scheduled_trials,
+                             tooltip = c("text"))
+
+# Loop to reformat the labels
+for (i in 1:length(scheduled_trials$x$data)){
+    if (!is.null(scheduled_trials$x$data[[i]]$name)){
+        scheduled_trials$x$data[[i]]$name =  gsub("\\(","",str_split(scheduled_trials$x$data[[i]]$name,",")[[1]][1])
+    }
+}
+
+### Playing with the tooltips ###
+# From the materials here: https://plotly-r.com/controlling-tooltips.html
+
+# Create the font style
+font <- list(
+  family = "Roboto",
+  size = 20,
+  color = "white"
+)
+
+# Create the tooltip style using the font parameters above
+tooltip_label <- list(
+  bordercolor = "transparent",
+  font = font
+)
+```
+
+Data Table {data-navmenu="Data"}
+=====
+
+Sidebar {.sidebar}
+-----
+
+### Data summary
+
+Management Information showing interim monthly business volumes and trends for first instance criminal cases calling at Scottish courts during the Coronavirus pandemic. Official Statistics with full commentary are published quarterly.
+
+This site is not affiliated with SCTS in any way.
+
+<i class='fas fa-book'></i> Data sourced from: <a href='https://scotcourts.gov.uk/official-statistics'>Scottish Courts and Tribunals Service: Management Information</a>
+
+Column {.tabset}
+----------------
+
+### Time series of business volumes - scrollable version
+
+Data are presented at the national level for Scotland, disaggregated by court type. Options for selection from the dropdown menus are:
+
+* All - see tables for all courts listed below
+
+* National - aggregated data from all courts
+
+* High Court
+
+* Sheriff Court - Solemn (Sheriff and Jury)
+
+* Sheriff Court - Summary
+
+* Justice of the Peace Court
+
+Cells are colour-coded either green, red, or grey depending on whether the value is an improvement on the 2019/20 monthly average of 5% or more (green); a deterioration of 5% or more (red); or where the value is within 5% of the 2019/20 monthly average (grey).
+
+Column widths can be expanded. The table below allows for horizontal scrolling; depending on your screensize and settings you may need to navigate to the bottom of the page to use the scrolling function.
+
+Charts for select court stages can be viewed by selected the 'Pages' dropdown menu in the navigation bar and choosing 'Charts'.
+
+<div class="chart-sizing">
+
+```{r data-tablescroll, echo=FALSE, cache=TRUE}
+
+mi_table
+
+```
+
+</div>
+
+### Time series of business volumes - static version
+
+Data are presented at the national level for Scotland, disaggregated by court type. Options for selection from the dropdown menus are:
+
+* All - see tables for all courts listed below
+
+* National - aggregated data from all courts
+
+* High Court
+
+* Sheriff Court - Solemn (Sheriff and Jury)
+
+* Sheriff Court - Summary
+
+* Justice of the Peace Court
+
+Cells are colour-coded either green, red, or grey depending on whether the value is an improvement on the 2019/20 monthly average of 5% or more (green); a deterioration of 5% or more (red); or where the value is within 5% of the 2019/20 monthly average (grey).
+
+Column widths can be expanded. The table below allows for horizontal scrolling; depending on your screensize and settings you may need to navigate to the bottom of the page to use the scrolling function.
+
+Charts for select court stages can be viewed by selected the 'Pages' dropdown menu in the navigation bar and choosing 'Charts'.
+
+<div class="chart-sizing">
+
+```{r data-tablestatic, echo=FALSE, cache=TRUE}
+
+mi_table_static
+
+```
+
+</div>
+
+Charts {data-navmenu="Data"}
+=====
+
+Column {.tabset}
+-----
+
+### Cases registered
+
+This interactive chart can be navigated using the buttons to the right of the chart. Summary information of each datapoint can be viewed by hovering the mouse over the bars.
+
+Sheriff Solemn figures are from 'Indictments Registered'
+
+<div class="chart-sizing">
+
+```{r cases-registered-chart, echo=FALSE}
+ggplotly(cases_registered,
+         tooltip = c("text")) %>% 
+  style(hoverlabel = tooltip_label) %>% # from the tooltip specified previously
+  layout(font = font)
+```
+
+
+
+```{r cases-registered-table, echo=FALSE, cache=TRUE}
+# I needed to create separate tables to show only the data relating to the plot above, as I couldn't figure out how to select the appropriate rows
+cases_registered_table <- midata3 %>%
+  select(-c("Court.stage", "2023.24", "min_monthlyaverage", "max_monthlyaverage")) %>% 
+  filter(ID %in% c("National_National total of cases registered (not including petitions)",
+                            "High Court_Indictments registered",
+                            "Sheriff Court - Solemn business_Indictments registered",
+                            "Sheriff Court - Summary business_Complaints registered",
+                            "Justice of the Peace Court_Complaints registered during period"))
+# View(cases_registered_table)
+# Then use this to make a table with only the required rows and correct formatting
+
+reactable(cases_registered_table[2:41],
+          height = 220,
+          theme = fivethirtyeight(),
+          highlight = TRUE,
+          wrap = FALSE,
+          sortable = FALSE,
+          resizable = TRUE,
+          defaultColDef = colDef(
+            align = "left"),
+          columns = list(
+            Court.type = colDef(
+              style = sticky_style,
+              sticky = "left",
+              headerStyle = sticky_style,
+              minWidth = 250,
+              name = "Court type"), # rename column
+            Apr.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Apr.20_cols"),
+              name = "April 2020"),
+            May.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "May.20_cols"),
+              name = "May 2020"),
+            Jun.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Jun.20_cols"),
+              name = "June 2020"),
+            Jul.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Jul.20_cols"),
+              name = "July 2020"),
+            Aug.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Aug.20_cols"),
+              name = "Aug 2020"),
+            Sep.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Sep.20_cols"),
+              name = "Sept 2020"),
+            Oct.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Oct.20_cols"),
+              name = "Oct 2020"),
+            Nov.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Nov.20_cols"),
+              name = "Nov 2020"),
+            Dec.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Dec.20_cols"),
+              name = "Dec 2020"),
+            Jan.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Jan.21_cols"),
+              name = "Jan 2021"),
+            Feb.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Feb.21_cols"),
+              name = "Feb 2021"),
+            Mar.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Mar.21_cols"),
+              name = "March 2021"),
+            Apr.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Apr.21_cols"),
+              name = "April 2021"),
+            May.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "May.21_cols"),
+              name = "May 2021"),
+            Jun.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Jun.21_cols"),
+              name = "June 2021"),
+            Jul.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Jul.21_cols"),
+              name = "July 2021"),
+            Aug.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Aug.21_cols"),
+              name = "Aug 2021"),
+            Sep.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Sep.21_cols"),
+              name = "Sept 2021"),
+            Oct.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Oct.21_cols"),
+              name = "Oct 2021"),
+            Nov.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Nov.21_cols"),
+              name = "Nov 2021"),
+            Dec.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Dec.21_cols"),
+              name = "Dec 2021"),
+            Jan.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Jan.22_cols"),
+              name = "Jan 2022"),
+            Feb.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Feb.22_cols"),
+              name = "Feb 2022"),
+            Mar.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Mar.22_cols"),
+              name = "March 2022"),
+            Apr.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Apr.22_cols"),
+              name = "April 2022"),
+            May.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "May.22_cols"),
+              name = "May 2022"),
+            Jun.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Jun.22_cols"),
+              name = "June 2022"),
+            Jul.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Jul.22_cols"),
+              name = "July 2022"),
+            Aug.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Aug.22_cols"),
+              name = "Aug 2022"),
+            Sep.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Sep.22_cols"),
+              name = "Sept 2022"),
+            Oct.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Oct.22_cols"),
+              name = "Oct 2022"),
+            Nov.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Nov.22_cols"),
+              name = "Nov 2022"),
+            Dec.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Dec.22_cols"),
+              name = "Dec 2022"),
+            Jan.23 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Jan.23_cols"),
+              name = "Jan 2023"),
+            Feb.23 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Feb.23_cols"),
+              name = "Feb 2023"),
+            Mar.23 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Mar.23_cols"),
+              name = "March 2023"),
+            Apr.23 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "Apr.23_cols"),
+              name = "April 2023"),
+            May.23 = colDef(
+              align = "center",
+              cell = color_tiles(cases_registered_table, color_ref = "May.23_cols"),
+              name = "May 2023"),
+            `2019.20.monthly.average` = colDef(
+              style = sticky_style2,
+              headerStyle = sticky_style2,
+              name = "2019/20 monthly average", # rename column
+              sticky = "right"),
+            defaultPageSize = 13)) %>%
+  google_font("Roboto")
+
+```
+
+</div>
+
+### Trials called
+
+This interactive chart can be navigated using the buttons to the right of the chart. Summary information of each datapoint can be viewed by hovering the mouse over the bars.
+
+<div class="chart-sizing">
+
+```{r trials-called-chart, echo=FALSE}
+ggplotly(trials_called, tooltip = c("text")) %>% 
+  style(hoverlabel = tooltip_label) %>% 
+  layout(font = font)
+```
+
+
+
+```{r trials-called-table, echo=FALSE, cache=TRUE}
+
+trials_called_table <- midata3 %>%
+  select(-c("2023.24", "min_monthlyaverage", "max_monthlyaverage")) %>% 
+  filter(ID %in% c("National_National total of trials called",
+                            "High Court_Trials called",
+                            "Sheriff Court - Solemn business_Trials called",
+                            "Sheriff Court - Summary business_Trials called",
+                            "Justice of the Peace Court_Trials called"))
+
+reactable(trials_called_table[2:42],
+          height = 220,
+          theme = fivethirtyeight(),
+          highlight = TRUE,
+          wrap = FALSE,
+          sortable = FALSE,
+          resizable = TRUE,
+          defaultColDef = colDef(
+            align = "left"
+          ),
+          columns = list(
+            Court.type = colDef(
+              style = sticky_style,
+              sticky = "left",
+              headerStyle = sticky_style,
+              minWidth = 250,
+              name = "Court type"), # rename column
+            Court.stage = colDef(show = FALSE),
+            `2023.24` = colDef(
+              name = "2023/24"), # rename column
+            `2019.20.monthly.average` = colDef(
+              style = sticky_style2,
+              headerStyle = sticky_style2,
+              name = "2019/20 monthly average", # rename column
+              sticky = "right"),
+            Apr.20 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Apr.20_cols"),
+              name = "April 2020"),
+            May.20 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "May.20_cols"),
+              name = "May 2020"),
+            Jun.20 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Jun.20_cols"),
+              name = "June 2020"),
+            Jul.20 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Jul.20_cols"),
+              name = "July 2020"),
+            Aug.20 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Aug.20_cols"),
+              name = "Aug 2020"),
+            Sep.20 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Sep.20_cols"),
+              name = "Sept 2020"),
+            Oct.20 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Oct.20_cols"),
+              name = "Oct 2020"),
+            Nov.20 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Nov.20_cols"),
+              name = "Nov 2020"),
+            Dec.20 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Dec.20_cols"),
+              name = "Dec 2020"),
+            Jan.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Jan.21_cols"),
+              name = "Jan 2021"),
+            Feb.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Feb.21_cols"),
+              name = "Feb 2021"),
+            Mar.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Mar.21_cols"),
+              name = "March 2021"),
+            Apr.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Apr.21_cols"),
+              name = "April 2021"),
+            May.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "May.21_cols"),
+              name = "May 2021"),
+            Jun.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Jun.21_cols"),
+              name = "June 2021"),
+            Jul.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Jul.21_cols"),
+              name = "July 2021"),
+            Aug.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Aug.21_cols"),
+              name = "Aug 2021"),
+            Sep.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Sep.21_cols"),
+              name = "Sept 2021"),
+            Oct.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Oct.21_cols"),
+              name = "Oct 2021"),
+            Nov.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Nov.21_cols"),
+              name = "Nov 2021"),
+            Dec.21 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Dec.21_cols"),
+              name = "Dec 2021"),
+            Jan.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Jan.22_cols"),
+              name = "Jan 2022"),
+            Feb.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Feb.22_cols"),
+              name = "Feb 2022"),
+            Mar.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Mar.22_cols"),
+              name = "March 2022"),
+            Apr.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Apr.22_cols"),
+              name = "April 2022"),
+            May.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "May.22_cols"),
+              name = "May 2022"),
+            Jun.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Jun.22_cols"),
+              name = "June 2022"),
+            Jul.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Jul.22_cols"),
+              name = "July 2022"),
+            Aug.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Aug.22_cols"),
+              name = "Aug 2022"),
+            Sep.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Sep.22_cols"),
+              name = "Sept 2022"),
+            Oct.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Oct.22_cols"),
+              name = "Oct 2022"),
+            Nov.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Nov.22_cols"),
+              name = "Nov 2022"),
+            Dec.22 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Dec.22_cols"),
+              name = "Dec 2022"),
+            Jan.23 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Jan.23_cols"),
+              name = "Jan 2023"),
+            Feb.23 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Feb.23_cols"),
+              name = "Feb 2023"),
+            Mar.23 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Mar.23_cols"),
+              name = "March 2023"),
+            Apr.23 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "Apr.23_cols"),
+              name = "April 2023"),
+            May.23 = colDef(
+              align = "center",
+              cell = color_tiles(trials_called_table, color_ref = "May.23_cols"),
+              name = "May 2023"),
+          defaultPageSize = 13)) %>% 
+  google_font("Roboto")
+
+```
+
+</div>
+
+### Trials called where evidence was led
+
+This interactive chart can be navigated using the buttons to the right of the chart. Summary information of each datapoint can be viewed by hovering the mouse over the bars.
+
+<div class="chart-sizing">
+
+```{r evidence-led-chart, echo=FALSE}
+ggplotly(evidence_led, tooltip = c("text")) %>% 
+  style(hoverlabel = tooltip_label) %>% 
+  layout(font = font)
+```
+
+
+```{r evidence-led-table, echo=FALSE, cache=TRUE}
+
+evidence_led_table <- midata3 %>%
+  select(-c("2023.24", "min_monthlyaverage", "max_monthlyaverage")) %>% 
+  filter(ID %in% c("National_National total of trials called where evidence was led",
+                            "High Court_Trials called where evidence was led",
+                            "Sheriff Court - Solemn business_Trials called where evidence was led",
+                            "Sheriff Court - Summary business_Trials called where evidence was led",
+                            "Justice of the Peace Court_Trials called where evidence was led"))
+ 
+reactable(
+  evidence_led_table[2:42],
+  height = 220,
+  theme = fivethirtyeight(),
+  highlight = TRUE,
+  wrap = FALSE,
+  sortable = FALSE,
+  resizable = TRUE,
+  defaultColDef = colDef(
+    align = "left"
+  ),
+  columns = list(
+            Court.type = colDef(
+              style = sticky_style,
+              sticky = "left",
+              headerStyle = sticky_style,
+              minWidth = 250,
+              name = "Court type"), # rename column
+            Court.stage = colDef(show = FALSE),
+            `2023.24` = colDef(
+              name = "2023/24"), # rename column
+            `2019.20.monthly.average` = colDef(
+              style = sticky_style2,
+              headerStyle = sticky_style2,
+              name = "2019/20 monthly average", # rename column
+              sticky = "right"),
+            Apr.20 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Apr.20_cols"),
+              name = "April 2020"),
+            May.20 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "May.20_cols"),
+              name = "May 2020"),
+            Jun.20 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Jun.20_cols"),
+              name = "June 2020"),
+            Jul.20 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Jul.20_cols"),
+              name = "July 2020"),
+            Aug.20 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Aug.20_cols"),
+              name = "Aug 2020"),
+            Sep.20 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Sep.20_cols"),
+              name = "Sept 2020"),
+            Oct.20 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Oct.20_cols"),
+              name = "Oct 2020"),
+            Nov.20 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Nov.20_cols"),
+              name = "Nov 2020"),
+            Dec.20 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Dec.20_cols"),
+              name = "Dec 2020"),
+            Jan.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Jan.21_cols"),
+              name = "Jan 2021"),
+            Feb.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Feb.21_cols"),
+              name = "Feb 2021"),
+            Mar.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Mar.21_cols"),
+              name = "March 2021"),
+            Apr.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Apr.21_cols"),
+              name = "April 2021"),
+            May.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "May.21_cols"),
+              name = "May 2021"),
+            Jun.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Jun.21_cols"),
+              name = "June 2021"),
+            Jul.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Jul.21_cols"),
+              name = "July 2021"),
+            Aug.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Aug.21_cols"),
+              name = "Aug 2021"),
+            Sep.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Sep.21_cols"),
+              name = "Sept 2021"),
+            Oct.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Oct.21_cols"),
+              name = "Oct 2021"),
+            Nov.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Nov.21_cols"),
+              name = "Nov 2021"),
+            Dec.21 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Dec.21_cols"),
+              name = "Dec 2021"),
+            Jan.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Jan.22_cols"),
+              name = "Jan 2022"),
+            Feb.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Feb.22_cols"),
+              name = "Feb 2022"),
+            Mar.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Mar.22_cols"),
+              name = "March 2022"),
+            Apr.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Apr.22_cols"),
+              name = "April 2022"),
+            May.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "May.22_cols"),
+              name = "May 2022"),
+            Jun.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Jun.22_cols"),
+              name = "June 2022"),
+            Jul.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Jul.22_cols"),
+              name = "July 2022"),
+            Aug.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Aug.22_cols"),
+              name = "Aug 2022"),
+            Sep.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Sep.22_cols"),
+              name = "Sept 2022"),
+            Oct.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Oct.22_cols"),
+              name = "Oct 2022"),
+            Nov.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Nov.22_cols"),
+              name = "Nov 2022"),
+            Dec.22 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Dec.22_cols"),
+              name = "Dec 2022"),
+            Jan.23 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Jan.23_cols"),
+              name = "Jan 2023"),
+            Feb.23 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Feb.23_cols"),
+              name = "Feb 2023"),
+            Mar.23 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Mar.23_cols"),
+              name = "March 2023"),
+            Apr.23 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "Apr.23_cols"),
+              name = "April 2023"),
+            May.23 = colDef(
+              align = "center",
+              cell = color_tiles(evidence_led_table, color_ref = "May.23_cols"),
+              name = "May 2023"),
+          defaultPageSize = 13)) %>% 
+  google_font("Roboto")
+
+```
+
+</div>
+
+### Cases concluded
+
+This interactive chart can be navigated using the buttons to the right of the chart. Summary information of each datapoint can be viewed by hovering the mouse over the bars.
+
+<div class="chart-sizing">
+
+```{r cases-concluded-chart, echo=FALSE}
+ggplotly(cases_concluded, tooltip = c("text")) %>% 
+  style(hoverlabel = tooltip_label) %>% 
+  layout(font = font)
+```
+
+
+
+```{r cases-concluded-table, echo=FALSE, cache=TRUE}
+
+cases_concluded_table <- midata3 %>%
+  select(-c("2023.24", "min_monthlyaverage", "max_monthlyaverage")) %>% 
+  filter(ID %in% c("National_National total of cases concluded",
+                            "High Court_Indictments concluded",
+                            "Sheriff Court - Solemn business_Indictments concluded",
+                            "Sheriff Court - Summary business_Complaints concluded",
+                            "Justice of the Peace Court_Complaints concluded"))
+
+reactable(cases_concluded_table[2:42],
+  height = 220,
+  theme = fivethirtyeight(),
+  highlight = TRUE,
+  wrap = FALSE,
+  sortable = FALSE,
+  resizable = TRUE,
+  defaultColDef = colDef(
+    align = "left"
+  ),
+  columns = list(
+            Court.type = colDef(
+              style = sticky_style,
+              sticky = "left",
+              headerStyle = sticky_style,
+              minWidth = 250,
+              name = "Court type"), # rename column
+            Court.stage = colDef(show = FALSE),
+            `2023.24` = colDef(
+              name = "2023/24"), # rename column
+            `2019.20.monthly.average` = colDef(
+              style = sticky_style2,
+              headerStyle = sticky_style2,
+              name = "2019/20 monthly average", # rename column
+              sticky = "right"),
+            Apr.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Apr.20_cols"),
+              name = "April 2020"),
+            May.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "May.20_cols"),
+              name = "May 2020"),
+            Jun.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Jun.20_cols"),
+              name = "June 2020"),
+            Jul.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Jul.20_cols"),
+              name = "July 2020"),
+            Aug.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Aug.20_cols"),
+              name = "Aug 2020"),
+            Sep.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Sep.20_cols"),
+              name = "Sept 2020"),
+            Oct.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Oct.20_cols"),
+              name = "Oct 2020"),
+            Nov.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Nov.20_cols"),
+              name = "Nov 2020"),
+            Dec.20 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Dec.20_cols"),
+              name = "Dec 2020"),
+            Jan.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Jan.21_cols"),
+              name = "Jan 2021"),
+            Feb.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Feb.21_cols"),
+              name = "Feb 2021"),
+            Mar.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Mar.21_cols"),
+              name = "March 2021"),
+            Apr.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Apr.21_cols"),
+              name = "April 2021"),
+            May.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "May.21_cols"),
+              name = "May 2021"),
+            Jun.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Jun.21_cols"),
+              name = "June 2021"),
+            Jul.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Jul.21_cols"),
+              name = "July 2021"),
+            Aug.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Aug.21_cols"),
+              name = "Aug 2021"),
+            Sep.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Sep.21_cols"),
+              name = "Sept 2021"),
+            Oct.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Oct.21_cols"),
+              name = "Oct 2021"),
+            Nov.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Nov.21_cols"),
+              name = "Nov 2021"),
+            Dec.21 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Dec.21_cols"),
+              name = "Dec 2021"),
+            Jan.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Jan.22_cols"),
+              name = "Jan 2022"),
+            Feb.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Feb.22_cols"),
+              name = "Feb 2022"),
+            Mar.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Mar.22_cols"),
+              name = "March 2022"),
+            Apr.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Apr.22_cols"),
+              name = "April 2022"),
+            May.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "May.22_cols"),
+              name = "May 2022"),
+            Jun.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Jun.22_cols"),
+              name = "June 2022"),
+            Jul.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Jul.22_cols"),
+              name = "July 2022"),
+            Aug.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Aug.22_cols"),
+              name = "Aug 2022"),
+            Sep.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Sep.22_cols"),
+              name = "Sept 2022"),
+            Oct.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Oct.22_cols"),
+              name = "Oct 2022"),
+            Nov.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Nov.22_cols"),
+              name = "Nov 2022"),
+            Dec.22 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Dec.22_cols"),
+              name = "Dec 2022"),
+            Jan.23 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Jan.23_cols"),
+              name = "Jan 2023"),
+            Feb.23 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Feb.23_cols"),
+              name = "Feb 2023"),
+            Mar.23 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Mar.23_cols"),
+              name = "March 2023"),
+            Apr.23 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "Apr.23_cols"),
+              name = "April 2023"),
+            May.23 = colDef(
+              align = "center",
+              cell = color_tiles(cases_concluded_table, color_ref = "May.23_cols"),
+              name = "May 2023"),
+          defaultPageSize = 13)) %>% 
+  google_font("Roboto")
+
+```
+
+</div>
+
+### Trial delays
+
+This interactive chart can be navigated using the buttons to the right of the chart. Summary information of each datapoint can be viewed by hovering the mouse over the solid lines.
+
+Average time between pleading diet and evidence led trial, where evidence led trial occurred in the period shown (weeks). Dashed lines show the average number of weeks as at the end of 2019/20.
+
+When an evidence led trial occurs, the trial date can be compared to the pleading diet date to obtain a measure of how long it has taken for the case to come to trial. Many factors can impact on the time between pleading diet and trial diet e.g. court programme capacity, adjournments due to lack of court time, witness availability, parties affected by COVID-19 etc. Where the value is marked as N/A, this means that there were no evidence led trials in the period therefore an average could not be constructed.
+
+<div class="chart-sizing">
+
+```{r average-time-chart, echo=FALSE}
+average_time %>% 
+  style(hoverlabel = tooltip_label) %>% 
+  layout(font = font)
+```
+
+
+
+```{r average-time-table, echo=FALSE, cache=TRUE}
+
+average_time_table <- midata3 %>%
+  select(-c("2023.24", "min_monthlyaverage", "max_monthlyaverage")) %>% 
+  filter(ID %in% c("High Court_Average time between pleading diet and evidence led trial, where evidence led trial occurred in the period shown (weeks)",
+                   "Sheriff Court - Solemn business_Average time between pleading diet and evidence led trial, where evidence led trial occurred in the period shown (weeks)",
+                   "Sheriff Court - Summary business_Average time between pleading diet and evidence led trial, where evidence led trial occurred in the period shown (weeks)",
+                   "Justice of the Peace Court_Average time between pleading diet and evidence led trial, where evidence led trial occurred in the period shown (weeks)"))
+ 
+reactable(average_time_table[2:42],
+  height = 220,
+  theme = fivethirtyeight(),
+  highlight = TRUE,
+  wrap = FALSE,
+  sortable = FALSE,
+  resizable = TRUE,
+  defaultColDef = colDef(
+    align = "left"
+  ),
+  columns = list(
+            Court.type = colDef(
+              style = sticky_style,
+              sticky = "left",
+              headerStyle = sticky_style,
+              minWidth = 250,
+              name = "Court type"), # rename column
+            Court.stage = colDef(show = FALSE),
+            `2023.24` = colDef(
+              name = "2023/24"), # rename column
+            `2019.20.monthly.average` = colDef(
+              style = sticky_style2,
+              headerStyle = sticky_style2,
+              name = "2019/20 monthly average", # rename column
+              sticky = "right"),
+            Apr.20 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Apr.20_cols"),
+              name = "April 2020"),
+            May.20 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "May.20_cols"),
+              name = "May 2020"),
+            Jun.20 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Jun.20_cols"),
+              name = "June 2020"),
+            Jul.20 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Jul.20_cols"),
+              name = "July 2020"),
+            Aug.20 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Aug.20_cols"),
+              name = "Aug 2020"),
+            Sep.20 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Sep.20_cols"),
+              name = "Sept 2020"),
+            Oct.20 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Oct.20_cols"),
+              name = "Oct 2020"),
+            Nov.20 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Nov.20_cols"),
+              name = "Nov 2020"),
+            Dec.20 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Dec.20_cols"),
+              name = "Dec 2020"),
+            Jan.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Jan.21_cols"),
+              name = "Jan 2021"),
+            Feb.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Feb.21_cols"),
+              name = "Feb 2021"),
+            Mar.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Mar.21_cols"),
+              name = "March 2021"),
+            Apr.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Apr.21_cols"),
+              name = "April 2021"),
+            May.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "May.21_cols"),
+              name = "May 2021"),
+            Jun.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Jun.21_cols"),
+              name = "June 2021"),
+            Jul.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Jul.21_cols"),
+              name = "July 2021"),
+            Aug.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Aug.21_cols"),
+              name = "Aug 2021"),
+            Sep.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Sep.21_cols"),
+              name = "Sept 2021"),
+            Oct.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Oct.21_cols"),
+              name = "Oct 2021"),
+            Nov.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Nov.21_cols"),
+              name = "Nov 2021"),
+            Dec.21 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Dec.21_cols"),
+              name = "Dec 2021"),
+            Jan.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Jan.22_cols"),
+              name = "Jan 2022"),
+            Feb.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Feb.22_cols"),
+              name = "Feb 2022"),
+            Mar.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Mar.22_cols"),
+              name = "March 2022"),
+            Apr.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Apr.22_cols"),
+              name = "April 2022"),
+            May.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "May.22_cols"),
+              name = "May 2022"),
+            Jun.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Jun.22_cols"),
+              name = "June 2022"),
+            Jul.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Jul.22_cols"),
+              name = "July 2022"),
+            Aug.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Aug.22_cols"),
+              name = "Aug 2022"),
+            Sep.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Sep.22_cols"),
+              name = "Sept 2022"),
+            Oct.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Oct.22_cols"),
+              name = "Oct 2022"),
+            Nov.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Nov.22_cols"),
+              name = "Nov 2022"),
+            Dec.22 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Dec.22_cols"),
+              name = "Dec 2022"),
+            Jan.23 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Jan.23_cols"),
+              name = "Jan 2023"),
+            Feb.23 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Feb.23_cols"),
+              name = "Feb 2023"),
+            Mar.23 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Mar.23_cols"),
+              name = "March 2023"),
+            Apr.23 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "Apr.23_cols"),
+              name = "April 2023"),
+            May.23 = colDef(
+              align = "center",
+              cell = color_tiles(average_time_table, color_ref = "May.23_cols"),
+              name = "May 2023"),
+          defaultPageSize = 13)) %>% 
+  google_font("Roboto")
+
+```
+
+</div>
+
+### Scheduled trials
+
+This interactive chart can be navigated using the buttons to the right of the chart. Summary information of each datapoint can be viewed by hovering the mouse over the solid lines.
+
+Average time between pleading diet and evidence led trial, where evidence led trial occurred in the period shown (weeks). Dashed lines show the average number of weeks as at the end of 2019/20.
+
+When an evidence led trial occurs, the trial date can be compared to the pleading diet date to obtain a measure of how long it has taken for the case to come to trial. Many factors can impact on the time between pleading diet and trial diet e.g. court programme capacity, adjournments due to lack of court time, witness availability, parties affected by COVID-19 etc. Where the value is marked as N/A, this means that there were no evidence led trials in the period therefore an average could not be constructed.
+
+<div class="chart-sizing">
+
+```{r scheduled-trials-chart, echo=FALSE}
+scheduled_trials %>% 
+  style(hoverlabel = tooltip_label) %>% 
+  layout(font = font)
+```
+
+
+
+```{r scheduled-trials-table, echo=FALSE, cache=TRUE}
+
+scheduled_trials_table <- midata3 %>%
+  select(-c("2023.24", "min_monthlyaverage", "max_monthlyaverage")) %>% 
+  filter(ID %in% c("National_National total of trials scheduled at end of period",
+                   "High Court_Trials scheduled at end of period",
+                   "Sheriff Court - Solemn business_Trials scheduled at end of period",
+                   "Sheriff Court - Summary business_Trials scheduled at end of period",
+                   "Justice of the Peace Court_Trials scheduled at end of period"))
+ 
+reactable(scheduled_trials_table[2:42],
+  height = 220,
+  theme = fivethirtyeight(),
+  highlight = TRUE,
+  wrap = FALSE,
+  sortable = FALSE,
+  resizable = TRUE,
+  defaultColDef = colDef(
+    align = "left"
+  ),
+  columns = list(
+            Court.type = colDef(
+              style = sticky_style,
+              sticky = "left",
+              headerStyle = sticky_style,
+              minWidth = 250,
+              name = "Court type"), # rename column
+            Court.stage = colDef(show = FALSE),
+            `2023.24` = colDef(
+              name = "2023/24"), # rename column
+            `2019.20.monthly.average` = colDef(
+              style = sticky_style2,
+              headerStyle = sticky_style2,
+              name = "2019/20 monthly average", # rename column
+              sticky = "right"),
+            Apr.20 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Apr.20_cols"),
+              name = "April 2020"),
+            May.20 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "May.20_cols"),
+              name = "May 2020"),
+            Jun.20 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Jun.20_cols"),
+              name = "June 2020"),
+            Jul.20 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Jul.20_cols"),
+              name = "July 2020"),
+            Aug.20 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Aug.20_cols"),
+              name = "Aug 2020"),
+            Sep.20 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Sep.20_cols"),
+              name = "Sept 2020"),
+            Oct.20 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Oct.20_cols"),
+              name = "Oct 2020"),
+            Nov.20 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Nov.20_cols"),
+              name = "Nov 2020"),
+            Dec.20 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Dec.20_cols"),
+              name = "Dec 2020"),
+            Jan.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Jan.21_cols"),
+              name = "Jan 2021"),
+            Feb.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Feb.21_cols"),
+              name = "Feb 2021"),
+            Mar.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Mar.21_cols"),
+              name = "March 2021"),
+            Apr.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Apr.21_cols"),
+              name = "April 2021"),
+            May.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "May.21_cols"),
+              name = "May 2021"),
+            Jun.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Jun.21_cols"),
+              name = "June 2021"),
+            Jul.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Jul.21_cols"),
+              name = "July 2021"),
+            Aug.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Aug.21_cols"),
+              name = "Aug 2021"),
+            Sep.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Sep.21_cols"),
+              name = "Sept 2021"),
+            Oct.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Oct.21_cols"),
+              name = "Oct 2021"),
+            Nov.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Nov.21_cols"),
+              name = "Nov 2021"),
+            Dec.21 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Dec.21_cols"),
+              name = "Dec 2021"),
+            Jan.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Jan.22_cols"),
+              name = "Jan 2022"),
+            Feb.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Feb.22_cols"),
+              name = "Feb 2022"),
+            Mar.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Mar.22_cols"),
+              name = "March 2022"),
+            Apr.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Apr.22_cols"),
+              name = "April 2022"),
+            May.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "May.22_cols"),
+              name = "May 2022"),
+            Jun.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Jun.22_cols"),
+              name = "June 2022"),
+            Jul.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Jul.22_cols"),
+              name = "July 2022"),
+            Aug.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Aug.22_cols"),
+              name = "Aug 2022"),
+            Sep.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Sep.22_cols"),
+              name = "Sept 2022"),
+            Oct.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Oct.22_cols"),
+              name = "Oct 2022"),
+            Nov.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Nov.22_cols"),
+              name = "Nov 2022"),
+            Dec.22 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Dec.22_cols"),
+              name = "Dec 2022"),
+            Jan.23 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Jan.23_cols"),
+              name = "Jan 2023"),
+            Feb.23 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Feb.23_cols"),
+              name = "Feb 2023"),
+            Mar.23 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Mar.23_cols"),
+              name = "March 2023"),
+            Apr.23 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "Apr.23_cols"),
+              name = "April 2023"),
+            May.23 = colDef(
+              align = "center",
+              cell = color_tiles(scheduled_trials_table, color_ref = "May.23_cols"),
+              name = "May 2023"),
+          defaultPageSize = 13)) %>% 
+  google_font("Roboto")
+
+```
+
+</div>
+
+Sheriff Court - Summary, and Justice of the Peace Court {data-navmenu="Court Processes"}
+=====
+
+<p><b>Definitions</b> - these can also be viewed by holding the cursor over each trial stage on the diagram.</p>
+
+<p>Summary case: A summary case is a less serious criminal case before a sheriff or justice of the peace, without a jury.</p>
+
+<p>First Calling: The first time a summary case is called in court.</p>
+
+<p>Continued Without Plea Hearing: A further opportunity for a summary case to call in court following no plea having been entered at first calling. This stage can sometimes be repeated more than once depending on the circumstances of the case.</p>
+
+<p>Intermediate Diet: A hearing in summary criminal proceedings which allows the court to check whether the case is likely to proceed on the date assigned for trial. The purpose is to minimise inconvenience to witnesses et al., if the trial is adjourned.</p>
+
+<p>Trial Diet: The legal action in a criminal court case.</p>
+
+<div class="flowchart-sizing">
+
+```{r flowcharts, echo=FALSE}
+library(DiagrammeR)
+
+DiagrammeR::grViz("digraph {
+                  graph [layout = dot,
+                  rankdir = LR]
+                  
+                  node [fontname = 'Roboto',
+                  shape = rectangle,
+                  style = filled,
+                  fontsize = 14]
+                  
+                  summary [label = 'Summary Case received and \nregistered by the SCTS at either a \nSheriff Court or a Justice of the \nPeace Court',
+                  fillcolor = '#4F81BD40',
+                  tooltip = 'A summary case is a less serious criminal case before a sheriff or justice of the peace, without a jury']
+                  
+                  first [label = 'First Calling',
+                  fillcolor = '#FCD5B5',
+                  tooltip = 'The first time a summary case is called in court']
+                  
+                  continue [label = 'Continued Without Plea Hearing',
+                  shape = oval,
+                  fillcolour = '#C4BD97',
+                  tooltip = 'A further opportunity for a summary case to call in court following no plea having been entered at first calling. This stage can sometimes be repeated more than once depending on the circumstances of the case.']
+                  
+                  intermediate [label = 'Intermediate Diet',
+                  fillcolor = '#ffff00',
+                  tooltip = 'A hearing in summary criminal proceedings which allows the court to check whether the case is likely to proceed on the date assigned for trial. The purpose is to minimise inconvenience to witnesses et al., if the trial is adjourned.']
+                  
+                  trial [label = 'Trial Diet',
+                  fillcolor = '#92D050',
+                  tooltip = 'The legal action in a criminal court case']
+                  
+                  {summary} -> first -> intermediate -> trial
+                  {first} -> continue
+                  {continue} -> intermediate
+}")
+```
+
+</div>
+
+Sheriff Court - Solemn {data-navmenu="Court Processes"}
+=====
+
+<p><b>Definitions</b> - these can also be viewed by holding the cursor over each trial stage on the diagram.</p>
+
+<p>Solemn case: Serious criminal case before a judge and jury in the High Court or sheriff and jury in the sheriff court.</p>
+
+<p>Section 76 Hearing: An accused person charged with a serious offence may give notice in writing that they intend to plead guilty to an indictment under section 76 of the Criminal Procedure (Scotland) Act 1995.</p>
+
+<p>First Diet: A date on which an indictment calls in the sheriff court in solemn proceedings to determine whether the prosecutor and defence are ready to go to trial.</p>
+
+<p>Continued First Diet: A date on which an indictment calls in the sheriff court in solemn proceedings to determine whether the prosecutor and defence are ready to go to trial – continued from an earlier First Diet. This stage can sometimes be repeated more than once depending on the circumstances of the case.</p>
+
+<p>Trial Diet: The legal action in a criminal court case.</p>
+
+<div class="flowchart-sizing">
+
+```{r flowchart2, echo=FALSE}
+DiagrammeR::grViz("digraph {
+                  graph [layout = dot,
+                  rankdir = LR,
+                  fontsize = 12]
+                  
+                  node [fontname = 'Roboto',
+                  shape = rectangle,
+                  style = filled]
+                  
+                  section76 [label = 'Section 76 Hearing',
+                  fillcolor = '#BFBFBF',
+                  tooltip = 'An accused person charged with a serious offence may give notice in writing that they intend to plead guilty to an indictment under section 76 of the Criminal Procedure (Scotland) Act 1995']
+                  
+                  summary2 [label = 'Solemn Case received and \nregistered by the SCTS at a \nSheriff Court',
+                  fillcolor = '#4F81BD40',
+                  tooltip = 'Serious criminal case before a judge and jury in the High Court or sheriff and jury in the sheriff court']
+                  
+                  first2 [label = 'First Diet',
+                  fillcolor = '#FCD5B5',
+                  tooltip = 'A date on which an indictment calls in the sheriff court in solemn proceedings to determine whether the prosecutor and defence are ready to go to trial']
+                  
+                  continue2 [label = 'Continued First Diet',
+                  shape = oval,
+                  fillcolour = '#C4BD97',
+                  tooltip = 'A date on which an indictment calls in the sheriff court in solemn proceedings to determine whether the prosecutor and defence are ready to go to trial – continued from an earlier First Diet. This stage can sometimes be repeated more than once depending on the circumstances of the case.']
+                  
+                  trial2 [label = 'Trial Diet',
+                  fillcolor = '#92D050',
+                  tooltip = 'The legal action in a criminal court case']
+                  
+                  {summary2} -> section76
+                  {summary2} -> first2 -> trial2
+                  {first2} -> continue2
+                  {continue2} -> trial2
+}")
+```
+
+</div>
+
+High Court {data-navmenu="Court Processes"}
+=====
+
+<p><b>Definitions</b> - these can also be viewed by holding the cursor over each trial stage on the diagram.</p>
+
+<p>Solemn case: Serious criminal case before a judge and jury in the High Court or sheriff and jury in the sheriff court.</p>
+
+<p>Section 76 Hearing: An accused person charged with a serious offence may give notice in writing that they intend to plead guilty to an indictment under section 76 of the Criminal Procedure (Scotland) Act 1995.</p>
+
+<p>Preliminary Hearing: A hearing in the High Court of Justiciary in solemn proceedings to decide if the case is ready to go for trial. Also preliminary legal or factual issues may be determined before trial at a preliminary hearing.</p>
+
+<p>Continued Preliminary Hearing: A hearing in the High Court of Justiciary in solemn proceedings to decide if the case is ready to go for trial – continued from an earlier Preliminary Hearing. Preliminary legal or factual issues may be determined before trial at a Continued preliminary hearing. This stage can sometimes be repeated more than once depending on the circumstances of the case.</p>
+
+<p>Trial Diet: The legal action in a criminal court case.</p>
+
+<div class="flowchart-sizing">
+
+```{r flowchart3, echo=FALSE}
+DiagrammeR::grViz("digraph {
+                  graph [layout = dot,
+                  rankdir = LR,
+                  fontsize = 12]
+                  
+                  node [fontname = 'Roboto',
+                  shape = rectangle,
+                  style = filled]
+                  
+                  section762 [label = 'Section 76 Hearing',
+                  fillcolor = '#BFBFBF',
+                  tooltip = 'An accused person charged with a serious offence may give notice in writing that they intend to plead guilty to an indictment under section 76 of the Criminal Procedure (Scotland) Act 1995']
+                  
+                  summary3 [label = 'Solemn Case received and \nregistered by the SCTS at the \nHigh Court of Justiciary',
+                  fillcolor = '#4F81BD40',
+                  tooltip = 'Serious criminal case before a judge and jury in the High Court or sheriff and jury in the sheriff court']
+                  
+                  preliminary [label = 'Preliminary Hearing',
+                  fillcolor = '#FCD5B5',
+                  tooltip = 'A hearing in the High Court of Justiciary in solemn proceedings to decide if the case is ready to go for trial. Also preliminary legal or factual issues may be determined before trial at a preliminary hearing.']
+                  
+                  continue3 [label = 'Continued Preliminary Hearing',
+                  shape = oval,
+                  fillcolour = '#C4BD97',
+                  tooltip = 'A hearing in the High Court of Justiciary in solemn proceedings to decide if the case is ready to go for trial – continued from an earlier Preliminary Hearing. Preliminary legal or factual issues may be determined before trial at a Continued preliminary hearing. This stage can sometimes be repeated more than once depending on the circumstances of the case.']
+                  
+                  trial3 [label = 'Trial Diet',
+                  fillcolor = '#92D050',
+                  tooltip = 'The legal action in a criminal court case']
+                  
+                  {summary3} -> section762
+                  {summary3} -> preliminary -> trial3
+                  {preliminary} -> continue3
+                  {continue3} -> trial3
+}")
+```
+
+</div>
+
+Glossary
+=====
+
+```{r glossary, echo=FALSE}
+glossary <- data.frame(Term = c("Accused",
+                  "Adjournment",
+                  "Appeal",
+                  "Average time between pleading diet and evidence led trial, where evidence led trial occurred in the period shown (weeks)",
+                  "Complaint",
+                  "Continued First Diet",
+                  "Continued Preliminary Hearing",
+                  "Continued without Plea",
+                  "Diet",
+                  "Disposed",
+                  "First calling",
+                  "First Diet",
+                  "First Instance",
+                  "Hearing",
+                  "Indictment",
+                  "Intermediate diet",
+                  "Jury",
+                  "Justice of the peace",
+                  "Lack of Court Time",
+                  "Petition",
+                  "Plea",
+                  "Pleading Diet",
+                  "Preliminary hearing",
+                  "Provisional",
+                  "Second Instance",
+                  "Section 76",
+                  "Sheriff",
+                  "Sheriff and jury",
+                  "Solemn case",
+                  "Summary case",
+                  "Sustained appeal",
+                  "Trial",
+                  "Trials called",
+                  "Trials called where evidence was led",
+                  "Trials scheduled"),
+                  Definition = c("A person charged with breaking the law. The term defendant is not used in Scotland",
+                   "An interruption to the proceedings when the court stops the hearing of the case for part of a day or for a longer period.",
+                   "An appeal is a re-hearing of a case by a higher court than the court which first heard the case. A re-hearing means re-consideration by the appellate court of the evidence led and the legal issues considered by the court below.",
+                   "When an evidence led trial occurs, the trial date can be compared to the pleading diet date to obtain a measure of how long it has taken for the case to come to trial. Many factors can impact on the time between pleading diet and trial diet e.g. court programme capacity, adjournments due to lack of court time, witness availability, parties affected by COVID-19 etc. Where the value is marked as N/A, this means that there were no evidence led trials in the period therefore an average could not be constructed.",
+                   "A statement accusing someone of breaking the law.",
+                   "A date on which an indictment calls in the sheriff court in solemn proceedings to determine whether the prosecutor and defence are ready to go to trial – continued from an earlier First Diet.",
+                   "A hearing in the High Court of Justiciary in solemn proceedings to decide if the case is ready to go for trial – continued from an earlier Preliminary Hearing. Preliminary legal or factual issues may be determined before trial at a Continued preliminary hearing.",
+                   "A further opportunity for a summary case to call in court following no plea having been entered at first calling.",
+                   "The date for a case, for instance, to hear a plea of guilty or not guilty, at an intermediate stage or for a trial.",
+                   "The complaint or indictment has been concluded.",
+                   "The first time a summary case is called in court.",
+                   "A date on which an indictment calls in the sheriff court in solemn proceedings to determine whether the prosecutor and defence are ready to go to trial.",
+                   "The court in which the case was first heard or tried as distinct from second instance which is where a case is appealed.",
+                   "Any part of a trial that takes place in a court.",
+                   "A document setting out the charge(s) of crimes or offences against an accused in more serious cases. A case on indictment is tried by judge sitting with a jury in the High Court (in the most serious cases), or the sheriff court. Cases tried on indictment are known as solemn proceedings.",
+                   "A hearing in summary criminal proceedings which allows the court to check whether the case is likely to proceed on the date assigned for trial. The purpose is to minimise inconvenience to witnesses etc. if the trial is adjourned.",
+                   "A group of lay persons chosen to decide upon issues of fact in legal proceedings. In criminal proceedings, a jury has 15 jurors.",
+                   "A lay magistrate who sits in the justice of the peace court.",
+                   "Cases that are continued to another sitting day due to the sitting day having ended.",
+                   "In criminal proceedings, the Crown (the prosecutor) may begin proceedings by petition before deciding whether to prosecute on indictment or by summary complaint. Only serious cases are begun by petition.",
+                   "The answer the accused gives to the court at the pre-trial hearings or at the beginning of a trial when asked if he or she is guilty or not guilty.",
+                   "Date assigned for a criminal case to call and for plea to be given, e.g., guilty or not guilty.",
+                   "A hearing in the High Court of Justiciary in solemn proceedings to decide if the case is ready to go for trial. Also preliminary legal or factual issues may be determined before trial at a preliminary hearing.",
+                   "A marking applied to statistical data to alert users that the data may be revised in the future and should not be considered as final data.",
+                   "The court in which an appeal is heard as distinct from first instance which is where a case originated.",
+                   "An accused person charged with a serious offence may give notice in writing that he intends to plead guilty to an indictment under section 76 of the Criminal Procedure (Scotland) Act 1995.",
+                   "The name for a judge in the sheriff court.",
+                   "Cases heard in the sheriff court by a sheriff and jury.",
+                   "Serious criminal case before a judge and jury in the High Court or sheriff and jury in the sheriff court.",
+                   "Less serious criminal case before a sheriff or justice of the peace, without a jury.",
+                   "An appeal that is upheld or granted.",
+                   "The legal action in a criminal court case.",
+                   "All trials that have commenced or ‘called’ in court. Some trials will conclude due to a guilty plea being entered before evidence is heard/seen; some trials will be adjourned to a later date and some trials will proceed to hear or see evidence.",
+                   "A subset of ‘Trials called’ where witnesses give evidence and productions are seen.",
+                   "The count of complaints or indictments that have a trial diet assigned but are yet to call in court."))
+
+knitr::kable(glossary)
+```
+
+Data Notes
+=====
+
+**Data source**
+
+The statistical information contained in this dataset is derived from a long-established series of internal monthly management information reports that are populated from a monthly data extract from COPII – the live operational case management system (an administrative database) used by the Scottish Courts and Tribunals Service (SCTS) to record activity on criminal court cases. 
+
+**Data quality**
+
+It is important that the data extract is accurate. This relies on all validations of activity on court records being made on COPII by the extract date. The Management Information and Analysis team (MIAT) proactively manage this process by advertising the data extract date on the SCTS intranet and by issuing a clear reminder to High Court and Sheriff Court clerks through the weekly circular and by email that validations must be completed by the extract date. If a court cannot validate its cases by the data extract date, the court can advise MIAT and it may be deemed necessary to delay the extract date by a few days to enable the validations to be completed. Extreme weather has caused the data extract to be delayed on a small number of occasions. 
+
+MIAT receives technical support regarding the data extract and the production of internal management information reports from the company who support and develop COPII for the SCTS.
+
+The internal management information reports that underpin this bulletin undergo robust quality assurance during the production process.
+
+Further quality assurance is undertaken around the production of these monthly statistics including input from local and national operational managers and from justice partners.
+
+**Data confidentiality**
+
+Court cases are held in public and may be reported on by the media unless the court orders otherwise, for example where children are involved.
+While our aim is for the statistics in this bulletin to be sufficiently detailed to allow a high level of practical utility, care has been taken to ensure that it is not possible to identify an individual or organisation and obtain any private information relating to them. All data is at case level.
+
+We have assessed the risk of individuals being identified in the tables in this bulletin and have established that no private information can be identified. 
+
+All counts are aggregated during the data extract process which ensures anonymity. No personal details relating to individuals or companies are seen by the tables’ producer (MIAT) nor the quality assurers.
+ 
+**Revisions**
+
+COPII is not designed for statistical purposes. If data anomalies are discovered that require a revision or correction to the tables, MIAT, at the SCTS, will comply with Scotland’s Chief Statistician’s current revisions policy.
+
+**Understanding the statistics in this bulletin**
+
+A case registered at court may have multiple accused persons and each accused person can have multiple charges. These statistics are focussed on the volume of cases that call at various key points in the court journey. Flowcharts have been provided to enable users to understand the journey that cases follow.
+
+**Comparisons with other sources**
+
+Care should be taken when comparing different data sources relating to the criminal justice system. For example the Scottish Government’s National Statistic on recorded crime statistics count crimes and offences at the time that they came to the attention of Police Scotland while the Scottish Government’s National Statistic on criminal proceedings reports on the convictions and sentencing of accused persons. A court case cannot have a gender or any other protected characteristic as cases can contain multiple accused persons. Data within this bulletin is at case level. 
+
+**Comparisons with statistics from other countries**
+
+Direct comparisons with statistics from other countries should be taken with care as legal frameworks and legislation for criminal offences differ. In addition data collection techniques and recording definitions will vary between countries. The Ministry of Justice court statistics are based on information directly captured from the court’s operational databases. 
+
+Despite international differences, statistics are included in international reports collated by the United Nations and Eurostat such as:
+
+* European Sourcebook of Crime and Criminal Justice Statistics
+* Various analysis and reports on the Eurostat website.
